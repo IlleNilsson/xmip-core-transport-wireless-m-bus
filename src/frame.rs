@@ -7,9 +7,10 @@
 //! after is sixteen bytes and its CRC, the last as long as what is left.
 //! The length counts everything from the control field to the end of the
 //! user data and none of the CRCs, so a frame carries at most 245 bytes
-//! past its control information. The CRC is the sixteen-bit polynomial of
-//! EN 13757-4, `0x3d65`, complemented.
+//! past its control information. The CRC is CRC-16/EN-13757, codec's.
 
+use codec::crc::CRC_16_EN_13757;
+use codec::hex;
 use transport::error::{Result, protocol_error};
 
 /// The meter sends, expecting no reply.
@@ -61,12 +62,12 @@ impl Frame {
         let mut first = vec![length, self.control];
         first.extend_from_slice(&self.address);
         let mut out = first.clone();
-        out.extend_from_slice(&crc(&first).to_be_bytes());
+        out.extend_from_slice(&CRC_16_EN_13757.checksum(&first).to_be_bytes());
         let mut rest = vec![self.ci];
         rest.extend_from_slice(&self.data);
         for block in rest.chunks(BLOCK) {
             out.extend_from_slice(block);
-            out.extend_from_slice(&crc(block).to_be_bytes());
+            out.extend_from_slice(&CRC_16_EN_13757.checksum(block).to_be_bytes());
         }
         Ok(out)
     }
@@ -114,28 +115,10 @@ fn checked(block: &[u8]) -> Result<&[u8]> {
     let (data, sum) = block
         .split_at_checked(block.len().saturating_sub(2))
         .ok_or_else(|| protocol_error("a block with no CRC"))?;
-    if crc(data).to_be_bytes() != sum {
+    if CRC_16_EN_13757.checksum(data).to_be_bytes() != sum {
         return Err(protocol_error("a block whose CRC does not check"));
     }
     Ok(data)
-}
-
-/// The CRC-16 of EN 13757-4: polynomial `0x3d65`, no initial value, the
-/// result complemented.
-#[must_use]
-pub fn crc(bytes: &[u8]) -> u16 {
-    let mut crc: u16 = 0;
-    for byte in bytes {
-        crc ^= u16::from(*byte) << 8;
-        for _ in 0..8 {
-            crc = if crc & 0x8000 != 0 {
-                (crc << 1) ^ 0x3d65
-            } else {
-                crc << 1
-            };
-        }
-    }
-    !crc
 }
 
 /// `<manufacturer>-<ident>` for a link address, as a Location names the
@@ -148,15 +131,8 @@ pub fn label(address: &[u8; 8]) -> String {
         .into_iter()
         .map(|shift| char::from(u8::try_from((code >> shift) & 0x1f).unwrap_or(0) + 64))
         .collect();
-    let digits = address[2..6]
-        .iter()
-        .rev()
-        .fold(String::new(), |mut digits, byte| {
-            use std::fmt::Write;
-            let _ = write!(digits, "{byte:02x}");
-            digits
-        });
-    format!("{letters}-{digits}")
+    let bcd: Vec<u8> = address[2..6].iter().rev().copied().collect();
+    format!("{letters}-{}", hex::encode(&bcd))
 }
 
 #[cfg(test)]
@@ -164,11 +140,6 @@ mod tests {
     use super::*;
 
     const ADDRESS: [u8; 8] = [0xb0, 0x61, 0x78, 0x56, 0x34, 0x12, 1, 7];
-
-    #[test]
-    fn the_crc_is_the_one_the_standard_names() {
-        assert_eq!(crc(b"123456789"), 0xc2b7, "the catalogue check value");
-    }
 
     #[test]
     fn a_frame_encodes_with_a_crc_a_block_and_decodes_back() {

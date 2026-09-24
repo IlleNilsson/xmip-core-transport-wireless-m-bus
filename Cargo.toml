@@ -20,6 +20,8 @@ transport = { package = "xmip-core-transport", git = "https://github.com/IlleNil
 # The application layer is wired M-Bus's: the records, the meter and the
 # line boundary come from m-bus, never copied, as wireless-hart takes hart's.
 m_bus = { package = "xmip-core-transport-m-bus", git = "https://github.com/IlleNilsson/xmip-core-transport-m-bus", branch = "main" }
+# The estate's encoding primitives: the block CRC, CRC-16/EN-13757.
+codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNilsson/xmip-core-library-codec", branch = "main" }
 
 [dev-dependencies]
 # The loopback payloads the tests drive, from the capability's test
