@@ -14,8 +14,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use m_bus::record::{CI_DATA_SEND, CI_VARIABLE_SHORT};
-use m_bus::{Identity, Line, Meter};
+use m_bus::{Identity, Meter};
 use transport::error::Result;
+use transport::line::Line;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Transport};
 
