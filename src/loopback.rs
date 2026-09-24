@@ -16,6 +16,7 @@ use std::time::Duration;
 use m_bus::record::{CI_DATA_SEND, CI_VARIABLE_SHORT};
 use m_bus::{Identity, Meter};
 use transport::error::Result;
+use transport::held::Held;
 use transport::line::Line;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Transport};
@@ -141,29 +142,14 @@ impl WirelessMBusTransport {
     }
 }
 
-/// The meter on the air, holding what the device wrote until it is read
-/// back.
-struct Holding {
-    device: WirelessMBusTransport,
-    address: String,
-}
-
-impl FarEnd for Holding {
-    fn address(&self) -> &str {
-        &self.address
-    }
-
-    fn take_one(self: Box<Self>) -> Result<Arrived> {
-        self.device.read_stream()
-    }
-}
-
 impl Loopback for WirelessMBusTransport {
+    /// The meter on the air, holding what the device wrote until it is read
+    /// back.
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
-        Ok(Box::new(Holding {
-            device: self.clone(),
-            address: self.origin(&self.address),
-        }))
+        let device = self.clone();
+        Ok(Box::new(Held::new(self.origin(&self.address), move || {
+            device.read_stream()
+        })))
     }
 
     /// A fresh device on the same air writes to the meter.
