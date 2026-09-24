@@ -34,7 +34,8 @@ use transport::error::{Result, protocol_error};
 use transport::{Arrived, Directions, Transport};
 
 pub use frame::{Frame, MAX_DATA};
-pub use m_bus::{Identity, Line, Meter};
+pub use m_bus::{Identity, Meter};
+use transport::line::Line;
 
 use crate::frame::{ACK, REQ_UD2, RSP_UD, SND_NKE, SND_NR, SND_UD};
 
