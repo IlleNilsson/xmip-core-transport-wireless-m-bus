@@ -15,11 +15,11 @@ use std::time::Duration;
 
 use m_bus::record::{CI_DATA_SEND, CI_VARIABLE_SHORT};
 use m_bus::{Identity, Meter};
+use transport::Transport;
 use transport::error::Result;
 use transport::held::Held;
 use transport::line::Line;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Arrived, Transport};
 
 use crate::frame::{ACK, BROADCAST, Frame, REQ_UD2, RSP_UD, SND_NKE, SND_NR, SND_UD};
 use crate::{ANSWER_ROOM, WirelessMBusTransport};
@@ -159,14 +159,10 @@ impl Loopback for WirelessMBusTransport {
             .send(address, payload)
     }
 
-    fn unblock(&self, _address: &str) {
-        // The air is in-process; nothing listens on a socket.
-    }
-
     /// In order on one thread: the air has one device asking, so the write
     /// goes first and the read-back finds what it left.
-    fn round(&self, payload: &[u8]) -> Result<Arrived> {
-        self.round_in_order(payload)
+    fn exchanges_in_order(&self) -> bool {
+        true
     }
 }
 
