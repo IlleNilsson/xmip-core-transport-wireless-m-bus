@@ -31,7 +31,8 @@ use std::time::Duration;
 
 use m_bus::record::{self, CI_DATA_SEND, CI_VARIABLE_SHORT};
 use transport::error::{Result, protocol_error};
-use transport::{Arrived, Directions, Transport};
+use transport::{Arrived, Configured, Directions, Transport};
+use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
 
 pub use frame::{Frame, MAX_DATA};
 pub use m_bus::{Identity, Meter};
@@ -42,6 +43,15 @@ use crate::frame::{ACK, REQ_UD2, RSP_UD, SND_NKE, SND_NR, SND_UD};
 /// The room a meter's telegram leaves for records: the frame's data less
 /// the short header.
 pub const ANSWER_ROOM: usize = MAX_DATA - 4;
+
+/// How long a device waits for a meter's answer unless told otherwise.
+pub const TIMEOUT: Duration = Duration::from_secs(1);
+
+/// A byte-sized part of a meter's identity.
+const BYTE: Kind = Kind::Integer {
+    minimum: 0,
+    maximum: 255,
+};
 
 /// The other device's side of the air: a concentrator, a gateway, a
 /// hand-held reader.
@@ -59,7 +69,7 @@ impl WirelessMBusTransport {
         Self {
             air,
             address,
-            timeout: Duration::from_secs(1),
+            timeout: TIMEOUT,
         }
     }
 
@@ -213,10 +223,115 @@ impl Transport for WirelessMBusTransport {
     }
 }
 
+impl Configured for WirelessMBusTransport {
+    /// The address names the air. `loopback`, a meter on an in-process
+    /// radio, is the one the estate has; a receiver joins when it exposes
+    /// one. The meter is named by the four parts of its link address.
+    const SETTINGS: &'static Settings = &Settings {
+        technology: env!("CARGO_PKG_NAME"),
+        settings: &[
+            Setting {
+                name: "manufacturer",
+                kind: Kind::Text,
+                presence: Presence::Required,
+                meaning: "The meter's manufacturer, three capital letters.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "ident",
+                kind: Kind::Integer {
+                    minimum: 0,
+                    maximum: 99_999_999,
+                },
+                presence: Presence::Required,
+                meaning: "The meter's identification number, eight decimal digits.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "version",
+                kind: BYTE,
+                presence: Presence::Required,
+                meaning: "The meter's version, as its link address carries it.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "medium",
+                kind: BYTE,
+                presence: Presence::Required,
+                meaning: "The meter's device type, EN 13757-3: 2 electricity, 3 gas, 7 water.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "timeout",
+                kind: Kind::Duration,
+                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
+                meaning: "How long a meter that does not answer is waited on.",
+                applies: Applies::Both,
+            },
+        ],
+    };
+
+    fn configured(address: &str, settings: &Read) -> Result<Self> {
+        let manufacturer: [u8; 3] = settings
+            .text("manufacturer")
+            .as_bytes()
+            .try_into()
+            .ok()
+            .filter(|letters: &[u8; 3]| letters.iter().all(u8::is_ascii_uppercase))
+            .ok_or_else(|| protocol_error("a manufacturer that is not three capital letters"))?;
+        let byte = |name| {
+            u8::try_from(settings.integer(name))
+                .map_err(|_| protocol_error(format!("a {name} over 255")))
+        };
+        let identity = Identity {
+            ident: u32::try_from(settings.integer("ident"))
+                .map_err(|_| protocol_error("an ident over eight digits"))?,
+            manufacturer,
+            version: byte("version")?,
+            medium: byte("medium")?,
+        };
+        let link = identity.link_address();
+        let air: Arc<dyn Line> = match address {
+            "loopback" => Arc::new(loopback::LoopbackRadio::new(Meter::new(identity))),
+            other => {
+                return Err(protocol_error(format!(
+                    "{other:?} is not an air this estate has; `loopback` is"
+                )));
+            }
+        };
+        Ok(Self::new(air, link).timing_out_after(settings.duration("timeout")))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::loopback::LoopbackRadio;
+    use xcore::settings::Given;
+
+    #[test]
+    fn wireless_m_bus_declares_its_settings_and_reads_through_them() {
+        assert_eq!(
+            WirelessMBusTransport::SETTINGS.problems(),
+            Vec::<String>::new()
+        );
+        let mut given = vec![
+            ("manufacturer".to_string(), Given::Text("ABC".to_string())),
+            ("ident".to_string(), Given::Integer(1)),
+            ("version".to_string(), Given::Integer(0)),
+            ("medium".to_string(), Given::Integer(3)),
+        ];
+        let built = WirelessMBusTransport::open("loopback", Applies::Send, &given).expect("built");
+        assert_eq!(built.address, identity().link_address());
+        assert_eq!(built.timeout, TIMEOUT);
+        given[0].1 = Given::Text("abc".to_string());
+        assert!(WirelessMBusTransport::open("loopback", Applies::Send, &given).is_err());
+        let Err(refused) = WirelessMBusTransport::open("loopback", Applies::Receive, &given[..2])
+        else {
+            panic!("version and medium are required");
+        };
+        assert!(refused.message.contains("medium"), "{}", refused.message);
+    }
 
     fn identity() -> Identity {
         Identity {
