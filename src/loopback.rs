@@ -21,7 +21,7 @@ use transport::held::Held;
 use transport::line::Line;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 
-use crate::frame::{ACK, BROADCAST, Frame, REQ_UD2, RSP_UD, SND_NKE, SND_NR, SND_UD};
+use crate::frame::{ACK, BROADCAST, Frame, REQ_UD2, RSP_UD, SND_NKE, SND_UD};
 use crate::{ANSWER_ROOM, WirelessMBusTransport};
 
 /// A meter listening on an in-process radio.
@@ -49,11 +49,12 @@ impl LoopbackRadio {
     ///
     /// # Errors
     /// Never on this air; the signature is the line's.
-    pub fn send_unasked(&self) -> Result<()> {
+    #[cfg(test)]
+    fn send_unasked(&self) -> Result<()> {
         loop {
             let data = self.meter.give(ANSWER_ROOM)?;
             let more = data.last() == Some(&m_bus::record::MORE_FOLLOW);
-            self.queue(self.meter_frame(SND_NR, data)?);
+            self.queue(self.meter_frame(crate::frame::SND_NR, data)?);
             if !more {
                 return Ok(());
             }
@@ -241,7 +242,7 @@ mod tests {
             .expect("broadcast");
         assert_eq!(radio.meter().held(), b"to whom it may concern");
         let unasked = Frame {
-            control: SND_NR,
+            control: crate::frame::SND_NR,
             address: [1; 8],
             ci: CI_DATA_SEND,
             data: vec![],
