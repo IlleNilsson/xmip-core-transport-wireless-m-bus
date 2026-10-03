@@ -20,6 +20,12 @@
 //! [`WirelessMBusTransport::loopback`] stands up (ADR-0051), as
 //! wireless-hart is to hart.
 //!
+//! **What a meter sends unasked is at-most-once** ([`AT_MOST_ONCE`]):
+//! `SND_NR` has no reply. **What a receive reads by `REQ_UD2` consumes
+//! nothing** — the meter keeps holding it — so its verdict has nothing to
+//! tell the meter, whichever it is, and a cycle that did not complete loses
+//! nothing.
+//!
 //! The origin URI names the air and the meter:
 //! `wmbus://<air>/<manufacturer>-<ident>`.
 
@@ -31,8 +37,13 @@ use std::time::Duration;
 
 use m_bus::record::{self, CI_DATA_SEND, CI_VARIABLE_SHORT};
 use transport::error::{Result, protocol_error};
-use transport::{Arrived, Configured, Directions, Transport};
+use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
 use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
+
+/// Why a Stream a meter sends unasked cannot be acknowledged after the
+/// receive cycle.
+pub const AT_MOST_ONCE: &str = "a wireless M-Bus meter sends SND_NR unasked and waits for no \
+                                reply: the telegram is off the air as it is heard";
 
 pub use frame::{Frame, MAX_DATA};
 pub use m_bus::{Identity, Meter};
@@ -126,48 +137,48 @@ impl WirelessMBusTransport {
         Ok(())
     }
 
-    /// Read the Stream the meter holds, a telegram of records at a time.
+    /// Read the Stream the meter holds, whole, a telegram of records at a
+    /// time. The meter keeps holding it.
     ///
     /// # Errors
     /// An answer that is not the meter's data, or records that are no
     /// Stream.
-    pub fn read_stream(&self) -> Result<Arrived> {
+    pub fn read_stream(&self) -> Result<Taken> {
         let mut bytes = Vec::new();
         loop {
             let answer = self.exchange(REQ_UD2, CI_DATA_SEND, Vec::new())?;
             let (chunk, more) = records_of(&answer, RSP_UD)?;
             bytes.extend_from_slice(&chunk);
             if !more {
-                return Ok(Arrived::new(self.origin(&answer.address), bytes));
+                return Ok(Taken::new(self.origin(&answer.address), bytes));
             }
         }
     }
 
-    /// Take what a meter sends unasked: the `SND_NR` telegrams of one
-    /// Stream, as many as it takes, or `None` when the air is quiet.
+    /// Take what a meter sends unasked, whole: the `SND_NR` telegrams of
+    /// one Stream, as many as it takes, or `None` when the air is quiet.
     ///
     /// # Errors
     /// A frame that is not a meter's transmission, or records that are no
     /// Stream.
-    pub fn listen(&self) -> Result<Option<Arrived>> {
+    pub fn listen(&self) -> Result<Option<Taken>> {
         let mut bytes = Vec::new();
         let mut from = None;
         loop {
             let Some(heard) = self.air.receive(self.timeout)? else {
-                return match from {
-                    Some(address) => Ok(Some(Arrived::new(
+                return Ok(from.map(|address| {
+                    Taken::new(
                         format!("{}?unsolicited=true", self.origin(&address)),
-                        bytes,
-                    ))),
-                    None => Ok(None),
-                };
+                        std::mem::take(&mut bytes),
+                    )
+                }));
             };
             let frame = Frame::decode(&heard)?;
             let (chunk, more) = records_of(&frame, SND_NR)?;
             bytes.extend_from_slice(&chunk);
             from = Some(frame.address);
             if !more {
-                return Ok(Some(Arrived::new(
+                return Ok(Some(Taken::new(
                     format!("{}?unsolicited=true", self.origin(&frame.address)),
                     bytes,
                 )));
@@ -208,13 +219,26 @@ impl Transport for WirelessMBusTransport {
         Directions::BOTH
     }
 
+    fn arrivals(&self) -> transport::Arrivals {
+        transport::Arrivals::Ordered("a poll reads again what is not yet told")
+    }
+
     /// What the meter sends unasked if it has; the Stream it holds
-    /// otherwise.
+    /// otherwise. Each arrives whole. Sent unasked, `SND_NR` has no reply:
+    /// acceptance is at-most-once ([`AT_MOST_ONCE`]). Read by `REQ_UD2`, the
+    /// verdict has nothing to tell the meter, whichever it is: the read
+    /// consumes nothing, so a cycle that did not complete loses nothing —
+    /// the next read finds the Stream again.
     fn receive(&self) -> Result<Vec<Arrived>> {
-        match self.listen()? {
-            Some(arrived) => Ok(vec![arrived]),
-            None => Ok(vec![self.read_stream()?]),
-        }
+        let (taken, acknowledgement) = match self.listen()? {
+            Some(heard) => (heard, Acknowledgement::at_most_once(AT_MOST_ONCE)),
+            None => (self.read_stream()?, Acknowledgement::unconsumed()),
+        };
+        Ok(vec![Arrived::whole(
+            taken.origin_uri,
+            taken.bytes,
+            acknowledgement,
+        )])
     }
 
     /// Write to the meter this device is configured for.

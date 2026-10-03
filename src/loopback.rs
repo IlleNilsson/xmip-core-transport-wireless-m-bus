@@ -211,14 +211,21 @@ mod tests {
         device.initialise().expect("SND_NKE");
         device.send("", &long).expect("thirteen telegrams");
         assert_eq!(radio.meter().held(), long);
-        let read = device.receive().expect("asked");
-        assert_eq!(read[0].bytes, long);
-        assert_eq!(read[0].origin_uri, "wmbus://loopback/ABC-00000042");
+        let read = device.receive().expect("asked").remove(0);
+        assert!(read.defers(), "a read consumes nothing: nothing to lose");
+        // A refused cycle loses nothing: the next read finds it again.
+        read.failed().expect("refused");
+        let read = device.receive().expect("asked again").remove(0);
+        let read = read.taken().expect("taken");
+        assert_eq!(read.bytes, long);
+        assert_eq!(read.origin_uri, "wmbus://loopback/ABC-00000042");
         radio.send_unasked().expect("SND_NR");
-        let heard = device.receive().expect("unasked");
-        assert_eq!(heard[0].bytes, long);
+        let heard = device.receive().expect("unasked").remove(0);
+        assert!(!heard.defers(), "SND_NR is at-most-once");
+        let heard = heard.taken().expect("taken");
+        assert_eq!(heard.bytes, long);
         assert_eq!(
-            heard[0].origin_uri,
+            heard.origin_uri,
             "wmbus://loopback/ABC-00000042?unsolicited=true"
         );
     }
