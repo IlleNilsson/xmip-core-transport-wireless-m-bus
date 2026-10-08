@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use m_bus::record::{CI_DATA_SEND, CI_VARIABLE_SHORT};
 use m_bus::{Identity, Meter};
+use transport::ArrivalIdentity;
 use transport::Transport;
 use transport::error::Result;
 use transport::held::Held;
@@ -144,6 +145,10 @@ impl WirelessMBusTransport {
 }
 
 impl Loopback for WirelessMBusTransport {
+    fn arrival_identity(&self) -> ArrivalIdentity {
+        ArrivalIdentity::Named(&[context::property::M_BUS_IDENTIFICATION_NUMBER])
+    }
+
     /// The meter on the air, holding what the device wrote until it is read
     /// back.
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {

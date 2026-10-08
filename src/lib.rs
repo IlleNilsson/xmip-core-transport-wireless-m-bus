@@ -35,6 +35,7 @@ pub mod loopback;
 use std::sync::Arc;
 use std::time::Duration;
 
+use context::property::M_BUS_IDENTIFICATION_NUMBER;
 use m_bus::record::{self, CI_DATA_SEND, CI_VARIABLE_SHORT};
 use transport::error::{Result, protocol_error};
 use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
@@ -150,7 +151,8 @@ impl WirelessMBusTransport {
             let (chunk, more) = records_of(&answer, RSP_UD)?;
             bytes.extend_from_slice(&chunk);
             if !more {
-                return Ok(Taken::new(self.origin(&answer.address), bytes));
+                return Ok(Taken::new(self.origin(&answer.address), bytes)
+                    .observing(M_BUS_IDENTIFICATION_NUMBER, frame::label(&answer.address)));
             }
         }
     }
@@ -171,6 +173,7 @@ impl WirelessMBusTransport {
                         format!("{}?unsolicited=true", self.origin(&address)),
                         std::mem::take(&mut bytes),
                     )
+                    .observing(M_BUS_IDENTIFICATION_NUMBER, frame::label(&address))
                 }));
             };
             let frame = Frame::decode(&heard)?;
@@ -178,10 +181,13 @@ impl WirelessMBusTransport {
             bytes.extend_from_slice(&chunk);
             from = Some(frame.address);
             if !more {
-                return Ok(Some(Taken::new(
-                    format!("{}?unsolicited=true", self.origin(&frame.address)),
-                    bytes,
-                )));
+                return Ok(Some(
+                    Taken::new(
+                        format!("{}?unsolicited=true", self.origin(&frame.address)),
+                        bytes,
+                    )
+                    .observing(M_BUS_IDENTIFICATION_NUMBER, frame::label(&frame.address)),
+                ));
             }
         }
     }
@@ -234,11 +240,10 @@ impl Transport for WirelessMBusTransport {
             Some(heard) => (heard, Acknowledgement::at_most_once(AT_MOST_ONCE)),
             None => (self.read_stream()?, Acknowledgement::unconsumed()),
         };
-        Ok(vec![Arrived::whole(
-            taken.origin_uri,
-            taken.bytes,
-            acknowledgement,
-        )])
+        Ok(vec![
+            Arrived::whole(taken.origin_uri, taken.bytes, acknowledgement)
+                .observing_all(taken.observed),
+        ])
     }
 
     /// Write to the meter this device is configured for.
