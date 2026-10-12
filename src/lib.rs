@@ -229,6 +229,10 @@ impl Transport for WirelessMBusTransport {
         transport::Arrivals::Ordered("a poll reads again what is not yet told")
     }
 
+    fn waiting(&self) -> transport::Waiting {
+        transport::Waiting::Waits("the air is heard until its timeout, then the meter is read")
+    }
+
     /// What the meter sends unasked if it has; the Stream it holds
     /// otherwise. Each arrives whole. Sent unasked, `SND_NR` has no reply:
     /// acceptance is at-most-once ([`AT_MOST_ONCE`]). Read by `REQ_UD2`, the
