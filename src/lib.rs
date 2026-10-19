@@ -239,7 +239,7 @@ impl Transport for WirelessMBusTransport {
     /// verdict has nothing to tell the meter, whichever it is: the read
     /// consumes nothing, so a cycle that did not complete loses nothing —
     /// the next read finds the Stream again.
-    fn receive(&self) -> Result<Vec<Arrived>> {
+    fn receive_up_to(&self, _most: usize) -> Result<Vec<Arrived>> {
         let (taken, acknowledgement) = match self.listen()? {
             Some(heard) => (heard, Acknowledgement::at_most_once(AT_MOST_ONCE)),
             None => (self.read_stream()?, Acknowledgement::unconsumed()),
@@ -250,8 +250,13 @@ impl Transport for WirelessMBusTransport {
         ])
     }
 
+    fn sending(&self) -> transport::Sending {
+        transport::Sending::Gathered("one wM-Bus telegram carries the whole body")
+    }
+
     /// Write to the meter this device is configured for.
-    fn send(&self, _target: &str, bytes: &[u8]) -> Result<()> {
+    fn send_from(&self, _target: &str, outgoing: transport::Outgoing<'_>) -> Result<()> {
+        let bytes: &[u8] = &outgoing.gather()?;
         self.write_stream(bytes)
     }
 }
