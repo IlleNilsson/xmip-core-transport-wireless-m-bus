@@ -118,11 +118,11 @@ impl WirelessMBusTransport {
         Frame::decode(&answer)
     }
 
-    /// `SND_NKE`: initialise the meter.
+    /// `SND_NKE`: initialize the meter.
     ///
     /// # Errors
     /// No acknowledgement.
-    pub fn initialise(&self) -> Result<()> {
+    pub fn initialize(&self) -> Result<()> {
         acknowledged(&self.exchange(SND_NKE, CI_DATA_SEND, Vec::new())?)
     }
 

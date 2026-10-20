@@ -213,7 +213,7 @@ mod tests {
         let long: Vec<u8> = (0..3000u32)
             .map(|n| u8::try_from(n % 253).unwrap_or(0))
             .collect();
-        device.initialise().expect("SND_NKE");
+        device.initialize().expect("SND_NKE");
         device.send("", &long).expect("thirteen telegrams");
         assert_eq!(radio.meter().held(), long);
         let read = device.receive().expect("asked").remove(0);
@@ -245,7 +245,7 @@ mod tests {
         })));
         let elsewhere = WirelessMBusTransport::new(Arc::clone(&radio) as Arc<dyn Line>, [0; 8])
             .timing_out_after(Duration::from_millis(10));
-        let error = elsewhere.initialise().expect_err("silence");
+        let error = elsewhere.initialize().expect_err("silence");
         assert!(error.retryable, "a meter may be out of range");
         let everyone = WirelessMBusTransport::new(Arc::clone(&radio) as Arc<dyn Line>, BROADCAST)
             .timing_out_after(Duration::from_millis(10));
