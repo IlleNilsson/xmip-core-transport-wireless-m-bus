@@ -17,7 +17,7 @@ use transport::error::{Result, protocol_error};
 pub const SND_NR: u8 = 0x44;
 /// The meter acknowledges.
 pub const ACK: u8 = 0x00;
-/// The other device initialises the meter.
+/// The other device initializes the meter.
 pub const SND_NKE: u8 = 0x40;
 /// The other device sends user data to the meter.
 pub const SND_UD: u8 = 0x53;
