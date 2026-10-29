@@ -309,6 +309,9 @@ impl Configured for WirelessMBusTransport {
         ],
     };
 
+    /// The schemes a Location's address is entered with to choose this technology.
+    const SCHEMES: &'static [&'static str] = &["wmbus"];
+
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let manufacturer: [u8; 3] = settings
             .text("manufacturer")
