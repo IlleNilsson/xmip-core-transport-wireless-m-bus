@@ -10,8 +10,9 @@
 //! in order.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use xcore::lock::Locked;
 
 use m_bus::record::{CI_DATA_SEND, CI_VARIABLE_SHORT};
 use m_bus::{Identity, Meter};
@@ -99,10 +100,7 @@ impl LoopbackRadio {
     }
 
     fn queue(&self, bytes: Vec<u8>) {
-        self.to_device
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push_back(bytes);
+        self.to_device.locked().push_back(bytes);
     }
 }
 
@@ -119,11 +117,7 @@ impl Line for LoopbackRadio {
     }
 
     fn receive(&self, _timeout: Duration) -> Result<Option<Vec<u8>>> {
-        Ok(self
-            .to_device
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pop_front())
+        Ok(self.to_device.locked().pop_front())
     }
 }
 
