@@ -17,6 +17,7 @@ use xcore::lock::Locked;
 use m_bus::record::{CI_DATA_SEND, CI_VARIABLE_SHORT};
 use m_bus::{Identity, Meter};
 use transport::ArrivalIdentity;
+use transport::Configured;
 use transport::Transport;
 use transport::error::Result;
 use transport::held::Held;

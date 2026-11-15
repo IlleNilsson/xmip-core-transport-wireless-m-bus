@@ -39,7 +39,7 @@ use context::property::M_BUS_IDENTIFICATION_NUMBER;
 use m_bus::record::{self, CI_DATA_SEND, CI_VARIABLE_SHORT};
 use transport::error::{Result, protocol_error};
 use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
-use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
+use xcore::settings::{Applies, Kind, Presence, Read, Setting, Settings};
 
 /// Why a Stream a meter sends unasked cannot be acknowledged after the
 /// receive cycle.
@@ -83,13 +83,6 @@ impl WirelessMBusTransport {
             address,
             timeout: TIMEOUT,
         }
-    }
-
-    /// Give up on a meter that does not answer within `timeout`.
-    #[must_use]
-    pub const fn timing_out_after(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
     }
 
     /// `wmbus://<air>/<manufacturer>-<ident>`.
@@ -299,18 +292,20 @@ impl Configured for WirelessMBusTransport {
                 meaning: "The meter's device type, EN 13757-3: 2 electricity, 3 gas, 7 water.",
                 applies: Applies::Both,
             },
-            Setting {
-                name: "timeout",
-                kind: Kind::Duration,
-                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
-                meaning: "How long a meter that does not answer is waited on.",
-                applies: Applies::Both,
-            },
+            transport::configured::timeout(
+                Applies::Both,
+                Some(TIMEOUT),
+                "How long a meter that does not answer is waited on.",
+            ),
         ],
     };
 
     /// The schemes a Location's address is entered with to choose this technology.
     const SCHEMES: &'static [&'static str] = &["wmbus"];
+
+    fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
+        Some(&mut self.timeout)
+    }
 
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let manufacturer: [u8; 3] = settings
@@ -340,7 +335,7 @@ impl Configured for WirelessMBusTransport {
                 )));
             }
         };
-        Ok(Self::new(air, link).timing_out_after(settings.duration("timeout")))
+        Ok(Self::new(air, link))
     }
 }
 
