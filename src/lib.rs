@@ -28,45 +28,61 @@
 //!
 //! The origin URI names the air and the meter:
 //! `wmbus://<air>/<manufacturer>-<ident>`.
+//!
+//! **Built with its `declaration` feature alone** the crate is
+//! [`declaration`], what a Location of it is configured with, and none of
+//! the code above, which is behind the default feature: what the surfaces'
+//! library carries (ADR-0064, amendment 2026-11-26).
 
+#[cfg(feature = "declaration")]
+pub mod declaration;
+#[cfg(feature = "default")]
 pub mod frame;
+#[cfg(feature = "default")]
 pub mod loopback;
 
+#[cfg(feature = "default")]
 use std::sync::Arc;
+#[cfg(feature = "default")]
 use std::time::Duration;
 
+#[cfg(feature = "default")]
 use context::property::M_BUS_IDENTIFICATION_NUMBER;
+#[cfg(feature = "default")]
 use m_bus::record::{self, CI_DATA_SEND, CI_VARIABLE_SHORT};
+#[cfg(feature = "default")]
 use transport::error::{Result, protocol_error};
+#[cfg(feature = "default")]
 use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
-use xcore::settings::{Applies, Kind, Presence, Read, Setting, Settings};
+#[cfg(feature = "default")]
+use xcore::settings::{Read, Settings};
 
 /// Why a Stream a meter sends unasked cannot be acknowledged after the
 /// receive cycle.
+#[cfg(feature = "default")]
 pub const AT_MOST_ONCE: &str = "a wireless M-Bus meter sends SND_NR unasked and waits for no \
                                 reply: the telegram is off the air as it is heard";
 
+#[cfg(feature = "declaration")]
+pub use declaration::TIMEOUT;
+#[cfg(feature = "default")]
 pub use frame::{Frame, MAX_DATA};
+#[cfg(feature = "default")]
 pub use m_bus::{Identity, Meter};
+#[cfg(feature = "default")]
 use transport::line::Line;
 
+#[cfg(feature = "default")]
 use crate::frame::{ACK, REQ_UD2, RSP_UD, SND_NKE, SND_NR, SND_UD};
 
 /// The room a meter's telegram leaves for records: the frame's data less
 /// the short header.
+#[cfg(feature = "default")]
 pub const ANSWER_ROOM: usize = MAX_DATA - 4;
-
-/// How long a device waits for a meter's answer unless told otherwise.
-pub const TIMEOUT: Duration = Duration::from_secs(1);
-
-/// A byte-sized part of a meter's identity.
-const BYTE: Kind = Kind::Integer {
-    minimum: 0,
-    maximum: 255,
-};
 
 /// The other device's side of the air: a concentrator, a gateway, a
 /// hand-held reader.
+#[cfg(feature = "default")]
 #[derive(Clone)]
 pub struct WirelessMBusTransport {
     air: Arc<dyn Line>,
@@ -74,6 +90,7 @@ pub struct WirelessMBusTransport {
     timeout: Duration,
 }
 
+#[cfg(feature = "default")]
 impl WirelessMBusTransport {
     /// A device on `air`, talking to the meter at link `address`.
     #[must_use]
@@ -188,6 +205,7 @@ impl WirelessMBusTransport {
 
 /// The records a meter's frame carries past its short header, if it is
 /// `control`.
+#[cfg(feature = "default")]
 fn records_of(frame: &Frame, control: u8) -> Result<(Vec<u8>, bool)> {
     if frame.control != control || frame.ci != CI_VARIABLE_SHORT {
         return Err(protocol_error(format!(
@@ -198,6 +216,7 @@ fn records_of(frame: &Frame, control: u8) -> Result<(Vec<u8>, bool)> {
     record::unpack(frame.data.get(4..).unwrap_or(&[]))
 }
 
+#[cfg(feature = "default")]
 fn acknowledged(answer: &Frame) -> Result<()> {
     if answer.control == ACK {
         Ok(())
@@ -209,6 +228,7 @@ fn acknowledged(answer: &Frame) -> Result<()> {
     }
 }
 
+#[cfg(feature = "default")]
 impl Transport for WirelessMBusTransport {
     fn name(&self) -> &'static str {
         "wireless-m-bus"
@@ -254,54 +274,10 @@ impl Transport for WirelessMBusTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Configured for WirelessMBusTransport {
-    /// The address names the air. `loopback`, a meter on an in-process
-    /// radio, is the one the estate has; a receiver joins when it exposes
-    /// one. The meter is named by the four parts of its link address.
-    const SETTINGS: &'static Settings = &Settings {
-        technology: env!("CARGO_PKG_NAME"),
-        settings: &[
-            Setting {
-                name: "manufacturer",
-                kind: Kind::Text,
-                presence: Presence::Required,
-                meaning: "The meter's manufacturer, three capital letters.",
-                applies: Applies::Both,
-            },
-            Setting {
-                name: "ident",
-                kind: Kind::Integer {
-                    minimum: 0,
-                    maximum: 99_999_999,
-                },
-                presence: Presence::Required,
-                meaning: "The meter's identification number, eight decimal digits.",
-                applies: Applies::Both,
-            },
-            Setting {
-                name: "version",
-                kind: BYTE,
-                presence: Presence::Required,
-                meaning: "The meter's version, as its link address carries it.",
-                applies: Applies::Both,
-            },
-            Setting {
-                name: "medium",
-                kind: BYTE,
-                presence: Presence::Required,
-                meaning: "The meter's device type, EN 13757-3: 2 electricity, 3 gas, 7 water.",
-                applies: Applies::Both,
-            },
-            transport::configured::timeout(
-                Applies::Both,
-                Some(TIMEOUT),
-                "How long a meter that does not answer is waited on.",
-            ),
-        ],
-    };
-
-    /// The schemes a Location's address is entered with to choose this technology.
-    const SCHEMES: &'static [&'static str] = &["wmbus"];
+    const SETTINGS: &'static Settings = declaration::SETTINGS;
+    const SCHEMES: &'static [&'static str] = declaration::SCHEMES;
 
     fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
         Some(&mut self.timeout)
@@ -343,7 +319,7 @@ impl Configured for WirelessMBusTransport {
 mod tests {
     use super::*;
     use crate::loopback::LoopbackRadio;
-    use xcore::settings::Given;
+    use xcore::settings::{Applies, Given};
 
     #[test]
     fn wireless_m_bus_declares_its_settings_and_reads_through_them() {
