@@ -8,6 +8,10 @@
 //! The length counts everything from the control field to the end of the
 //! user data and none of the CRCs, so a frame carries at most 245 bytes
 //! past its control information. The CRC is CRC-16/EN-13757, codec's.
+//!
+//! A receiver stick checks the CRCs on the air and strips them, and puts
+//! them on what it sends, so its host hands it and is handed the frame
+//! plain ([`Frame::plain`]): the same fields, the same length, no CRC.
 
 use codec::crc::CRC_16_EN_13757;
 use codec::hex;
@@ -52,14 +56,7 @@ impl Frame {
     /// # Errors
     /// More than [`MAX_DATA`] bytes of data.
     pub fn encode(&self) -> Result<Vec<u8>> {
-        if self.data.len() > MAX_DATA {
-            return Err(protocol_error(format!(
-                "{} bytes of user data is over a wireless frame's {MAX_DATA}",
-                self.data.len()
-            )));
-        }
-        let length = u8::try_from(10 + self.data.len()).unwrap_or(u8::MAX);
-        let mut first = vec![length, self.control];
+        let mut first = vec![self.length()?, self.control];
         first.extend_from_slice(&self.address);
         let mut out = first.clone();
         out.extend_from_slice(&CRC_16_EN_13757.checksum(&first).to_be_bytes());
@@ -107,6 +104,56 @@ impl Frame {
             ci: body[0],
             data: body[1..].to_vec(),
         })
+    }
+
+    /// The frame as a receiver hands its host what it heard and takes from
+    /// it what to send: the length, the control field, the address, the
+    /// control information and the data, and none of the blocks' CRCs.
+    ///
+    /// # Errors
+    /// More than [`MAX_DATA`] bytes of data.
+    pub fn plain(&self) -> Result<Vec<u8>> {
+        let mut plain = vec![self.length()?, self.control];
+        plain.extend_from_slice(&self.address);
+        plain.push(self.ci);
+        plain.extend_from_slice(&self.data);
+        Ok(plain)
+    }
+
+    /// The frame `bytes` carry plain, as [`Frame::plain`] writes it.
+    ///
+    /// # Errors
+    /// Too short for its header, or a length that is not what follows it.
+    pub fn from_plain(bytes: &[u8]) -> Result<Self> {
+        let Some((&length, rest)) = bytes.split_first() else {
+            return Err(protocol_error("a plain frame with no length"));
+        };
+        if usize::from(length) != rest.len() || rest.len() < 10 {
+            return Err(protocol_error(format!(
+                "a plain frame's length of {length} over {} bytes",
+                rest.len()
+            )));
+        }
+        let mut address = [0u8; 8];
+        address.copy_from_slice(&rest[1..9]);
+        Ok(Self {
+            control: rest[0],
+            address,
+            ci: rest[9],
+            data: rest[10..].to_vec(),
+        })
+    }
+
+    /// The length field: everything from the control field to the end of
+    /// the data, no CRC.
+    fn length(&self) -> Result<u8> {
+        if self.data.len() > MAX_DATA {
+            return Err(protocol_error(format!(
+                "{} bytes of user data is over a wireless frame's {MAX_DATA}",
+                self.data.len()
+            )));
+        }
+        u8::try_from(10 + self.data.len()).map_err(|_| protocol_error("a frame over its length"))
     }
 }
 
@@ -215,6 +262,36 @@ mod tests {
             Frame::decode(&short_length).is_err(),
             "the CRC catches the length"
         );
+    }
+
+    /// What a receiver hands its host is the frame plain: its length, its
+    /// fields and no CRC, read back as the frame the air carried.
+    #[test]
+    fn a_frame_plain_carries_its_length_and_fields_and_no_crc() {
+        let frame = Frame {
+            control: RSP_UD,
+            address: ADDRESS,
+            ci: 0x7a,
+            data: (0..40).collect(),
+        };
+        let plain = frame.plain().expect("plain");
+        assert_eq!(plain.len(), 51, "a length byte and the fifty it counts");
+        assert_eq!(
+            plain[0],
+            frame.encode().expect("encode")[0],
+            "the same length"
+        );
+        assert_eq!(
+            &plain[1..11],
+            [RSP_UD, 0xb0, 0x61, 0x78, 0x56, 0x34, 0x12, 1, 7, 0x7a]
+        );
+        assert_eq!(Frame::from_plain(&plain).expect("read back"), frame);
+        assert!(
+            Frame::from_plain(&plain[..50]).is_err(),
+            "a length longer than the frame"
+        );
+        assert!(Frame::from_plain(&[0]).is_err(), "no header");
+        assert!(Frame::from_plain(&[]).is_err(), "nothing");
     }
 
     #[test]

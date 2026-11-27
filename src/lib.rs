@@ -13,12 +13,19 @@
 //! acknowledged, read back by `REQ_UD2` and `RSP_UD`, or taken as the
 //! meter sends it unasked in `SND_NR`. There is no ceiling.
 //!
-//! The air is a [`Line`], the boundary wired M-Bus has for its wire: a
-//! deployment's is a radio receiver or a gateway on a serial port; the one
-//! here is a loopback radio with a meter listening, so a concentrator and
-//! a meter round-trip in process with no antenna, which is what
-//! [`WirelessMBusTransport::loopback`] stands up (ADR-0051), as
-//! wireless-hart is to hart.
+//! The air is a [`Line`], the boundary wired M-Bus has for its wire. A
+//! deployment's is a receiver stick on a serial port, [`Receiver`], which
+//! speaks the host controller interface of IMST's Wireless M-Bus Gateway
+//! firmware, the iU891A-XL's and the iU893A-XL's (`hci.rs`), over the port
+//! the serial technology opens: a Location's address is the port, and
+//! every Location on a node naming it shares the one stick, each taking its
+//! own meter's telegrams (`heard.rs`). The other is a loopback radio with a
+//! meter listening, so a concentrator and a meter round-trip in process
+//! with no antenna, which is what [`WirelessMBusTransport::loopback`]
+//! stands up (ADR-0051), as wireless-hart is to hart; and a stick in
+//! process with that meter on its air, [`stick::Stick`], answers a host as
+//! the firmware does, the far end a node reaches through a pseudo-terminal
+//! where no stick is plugged in.
 //!
 //! **What a meter sends unasked is at-most-once** ([`AT_MOST_ONCE`]):
 //! `SND_NR` has no reply. **What a receive reads by `REQ_UD2` consumes
@@ -27,7 +34,8 @@
 //! nothing.
 //!
 //! The origin URI names the air and the meter:
-//! `wmbus://<air>/<manufacturer>-<ident>`.
+//! `wmbus://<air>/<manufacturer>-<ident>`, the air a stick's port or
+//! `loopback`.
 //!
 //! **Built with its `declaration` feature alone** the crate is
 //! [`declaration`], what a Location of it is configured with, and none of
@@ -39,7 +47,15 @@ pub mod declaration;
 #[cfg(feature = "default")]
 pub mod frame;
 #[cfg(feature = "default")]
+pub mod hci;
+#[cfg(feature = "default")]
+mod heard;
+#[cfg(feature = "default")]
 pub mod loopback;
+#[cfg(feature = "default")]
+pub mod receiver;
+#[cfg(feature = "default")]
+pub mod stick;
 
 #[cfg(feature = "default")]
 use std::sync::Arc;
@@ -53,7 +69,7 @@ use m_bus::record::{self, CI_DATA_SEND, CI_VARIABLE_SHORT};
 #[cfg(feature = "default")]
 use transport::error::{Result, protocol_error};
 #[cfg(feature = "default")]
-use transport::{Acknowledgement, Arrived, Configured, Directions, Taken, Transport};
+use transport::{Acknowledgement, Arrived, Configured, Directions, Sharing, Taken, Transport};
 #[cfg(feature = "default")]
 use xcore::settings::{Read, Settings};
 
@@ -68,7 +84,11 @@ pub use declaration::TIMEOUT;
 #[cfg(feature = "default")]
 pub use frame::{Frame, MAX_DATA};
 #[cfg(feature = "default")]
+pub use hci::Mode;
+#[cfg(feature = "default")]
 pub use m_bus::{Identity, Meter};
+#[cfg(feature = "default")]
+pub use receiver::Receiver;
 #[cfg(feature = "default")]
 use transport::line::Line;
 
@@ -283,6 +303,19 @@ impl Configured for WirelessMBusTransport {
         Some(&mut self.timeout)
     }
 
+    /// The air on what the Locations of the node share: a stick's port
+    /// takes the one port its stick has on the node, and what the node's
+    /// Locations on it heard; the loopback radio stays as it is.
+    fn shared_by(mut self, sharing: &Arc<dyn Sharing>) -> Self {
+        if let Some(air) = self.air.shared_on(sharing) {
+            self.air = air;
+        }
+        self
+    }
+
+    /// A Location's address is the serial port its receiver stick is on,
+    /// `/dev/ttyUSB0` or `COM3`, or `loopback`, a meter on an in-process
+    /// radio.
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let manufacturer: [u8; 3] = settings
             .text("manufacturer")
@@ -305,10 +338,11 @@ impl Configured for WirelessMBusTransport {
         let link = identity.link_address();
         let air: Arc<dyn Line> = match address {
             "loopback" => Arc::new(loopback::LoopbackRadio::new(Meter::new(identity))),
-            other => {
-                return Err(protocol_error(format!(
-                    "{other:?} is not an air this estate has; `loopback` is"
-                )));
+            port => {
+                // The declaration holds the power within a byte's range.
+                let power = i8::try_from(settings.integer("power")).unwrap_or(0);
+                let mode = Mode::named(settings.text("mode"))?;
+                Arc::new(Receiver::on(port, link, mode, power))
             }
         };
         Ok(Self::new(air, link))
@@ -343,6 +377,37 @@ mod tests {
             panic!("version and medium are required");
         };
         assert!(refused.message.contains("medium"), "{}", refused.message);
+    }
+
+    /// Any other address is the serial port a receiver stick is on, its
+    /// mode and power the Location's or the declaration's.
+    #[test]
+    fn a_location_on_a_port_reaches_a_receiver_stick_on_it() {
+        let mut given = vec![
+            ("manufacturer".to_string(), Given::Text("ABC".to_string())),
+            ("ident".to_string(), Given::Integer(1)),
+            ("version".to_string(), Given::Integer(0)),
+            ("medium".to_string(), Given::Integer(3)),
+        ];
+        let built =
+            WirelessMBusTransport::open("wmbus://COM3", Applies::Send, &given).expect("built");
+        assert_eq!(built.air.name(), "COM3");
+        assert_eq!(built.origin(&built.address), "wmbus://COM3/ABC-00000001");
+        let read = WirelessMBusTransport::SETTINGS
+            .read(Applies::Send, &given)
+            .expect("read");
+        assert_eq!((read.text("mode"), read.integer("power")), ("t", 10));
+        given.push(("mode".to_string(), Given::Text("x".to_string())));
+        assert!(
+            WirelessMBusTransport::open("COM3", Applies::Send, &given).is_err(),
+            "no mode"
+        );
+        given.pop();
+        given.push(("power".to_string(), Given::Integer(14)));
+        assert!(
+            WirelessMBusTransport::open("COM3", Applies::Send, &given).is_err(),
+            "too loud"
+        );
     }
 
     fn identity() -> Identity {

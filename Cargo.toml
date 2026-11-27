@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/IlleNilsson/xmip-core-transport-wireless-m-bus"
-description = "Wireless M-Bus transport: EN 13757-4 over the air — the link layer frame of length, control, manufacturer, address and control information with a CRC per block, carrying the same records and the same meter as wired M-Bus; a loopback radio stands in for the receiver. A xmip-core-transport technology."
+description = "Wireless M-Bus transport: EN 13757-4 over the air — the link layer frame of length, control, manufacturer, address and control information with a CRC per block, carrying the same records and the same meter as wired M-Bus; a USB receiver stick on a serial port, or a loopback radio in process. A xmip-core-transport technology."
 publish = false
 
 [lib]
@@ -25,14 +25,18 @@ xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core
 # The application layer is wired M-Bus's: the records, the meter and the
 # line boundary come from m-bus, never copied, as wireless-hart takes hart's.
 m_bus = { package = "xmip-core-transport-m-bus", git = "https://github.com/IlleNilsson/xmip-core-transport-m-bus", branch = "main", optional = true }
-# The estate's encoding primitives: the block CRC, CRC-16/EN-13757.
+# The estate's encoding primitives: the block CRC, CRC-16/EN-13757, and the
+# receiver stick's message check, CRC-16/IBM-SDLC.
 codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNilsson/xmip-core-library-codec", branch = "main", optional = true }
+# The serial port a receiver stick is on, its messages SLIP frames
+# (`Framing::Slip`), shared by every Location on a node naming it.
+serial = { package = "xmip-core-transport-serial", git = "https://github.com/IlleNilsson/xmip-core-transport-serial", branch = "main", optional = true }
 
 [features]
 # The technology: its code, everything it is built on, and its declaration.
 # Without it the crate is its declaration alone (ADR-0064, amendments
 # 2026-10-22 and 2026-11-26).
-default = ["declaration", "dep:context", "dep:m_bus", "dep:codec"]
+default = ["declaration", "dep:context", "dep:m_bus", "dep:codec", "dep:serial"]
 # The declaration alone: what a Location of this technology is configured
 # with, `declaration::SETTINGS` and `SCHEMES`, with the wait its default
 # names, and none of the code — what the surfaces' library is to carry (open
@@ -43,6 +47,9 @@ declaration = []
 # The loopback payloads the tests drive, from the capability's test
 # support and never a production build (ADR-0044).
 transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main", features = ["test-support"] }
+# A pseudo-terminal pair a receiver stick in process answers on, Unix's
+# (`serial::terminal`), for the tests alone.
+serial = { package = "xmip-core-transport-serial", git = "https://github.com/IlleNilsson/xmip-core-transport-serial", branch = "main", features = ["test-support"] }
 
 [lints.rust]
 unsafe_code = "forbid"
